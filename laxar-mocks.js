@@ -2,17 +2,13 @@
  * Copyright 2016 aixigo AG
  * Released under the MIT license.
  * http://laxarjs.org/license
- *
- * with parts by Kris Kowal
- * Copyright 2009-2012 Kris Kowal under the terms of the MIT
- * license found at http://github.com/kriskowal/q/raw/master/LICENSE
  */
 /**
  * A testing framework for LaxarJS widgets.
  *
  * @module laxar-mocks
  */
-import { bootstrap } from 'laxar';
+import { assert, bootstrap } from 'laxar';
 
 // TODO (#26)work out laxar-side API
 import { create as createEventBusMock } from 'laxar/lib/testing/event_bus_mock';
@@ -20,8 +16,17 @@ import * as plainAdapter from 'laxar/lib/widget_adapters/plain_adapter';
 
 const widgetPrivateApi = {};
 
+// The AngularJS adapter messes with the regular Promise API.
+// To guarantee AngularJS-free scheduling of `widget.render` we need to hold on to the original.
+const Promise = window.Promise;
+const nextTick = f => {
+   Promise.resolve().then( f );
+};
+
+const noOp = () => {};
+
 let laxarServices;
-let widgetDomContainer;
+let anchorElement;
 let adapterInstance;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -76,7 +81,7 @@ export const widget = {
     */
    configure( keyOrConfiguration, optionalValue ) {
       if( !widgetPrivateApi.configure ) {
-         throw new Error( 'testing.createSetupForWidget needs to be called prior to configure.' );
+         throw new Error( 'laxar-mocks: createSetupForWidget needs to be called prior to configure.' );
       }
       widgetPrivateApi.configure( keyOrConfiguration, optionalValue );
    },
@@ -100,14 +105,14 @@ export const widget = {
     */
    load( done ) {
       if( !widgetPrivateApi.load ) {
-         throw new Error( 'testing.createSetupForWidget needs to be called prior to load.' );
+         throw new Error( 'laxar-mocks: createSetupForWidget needs to be called prior to load.' );
       }
       if( typeof done !== 'function' ) {
-         throw new Error( 'testing.widget.load needs to be called with a Jasmine done-callback function.' );
+         throw new Error( 'laxar-mocks: widget.load must be called with a Jasmine done-callback function.' );
       }
       widgetPrivateApi.load()
          .catch( handleErrorForJasmine )
-         .then( done );
+         .then( () => nextTick( done ) );
    },
 
    /**
@@ -123,14 +128,8 @@ export const widget = {
     * @memberOf Widget
     */
    render() {
-      if( widgetDomContainer && widgetDomContainer.parentElement ) {
-         widgetDomContainer.parentElement.removeChild( widgetDomContainer );
-      }
-      widgetDomContainer = document.createElement( 'div' );
-      widgetDomContainer.id = 'widgetContainer';
-      document.body.appendChild( widgetDomContainer );
-      widgetPrivateApi.renderTo( widgetDomContainer );
-      return widgetDomContainer.firstChild;
+      widgetPrivateApi.renderTo( anchorElement );
+      return anchorElement.firstChild;
    }
 };
 
@@ -139,14 +138,15 @@ export const widget = {
 function decoratedAdapter( adapter ) {
    return {
       technology: adapter.technology,
-      bootstrap( modules, services ) {
+      bootstrap( modules, services, domRoot ) {
          laxarServices = services;
          eventBus = createEventBusMock();
-         const result = adapter.bootstrap( modules, services );
+         const adapterFactory = adapter.bootstrap( modules, services, domRoot );
          return {
-            ...result,
+            ...adapterFactory,
             serviceDecorators() {
                return {
+                  ...( adapterFactory.serviceDecorators || noOp )(),
                   axGlobalEventBus: () => eventBus,
                   axEventBus: eventBus => {
                      const methods = [ 'subscribe', 'publish', 'publishAndGatherReplies', 'addInspector' ];
@@ -158,7 +158,7 @@ function decoratedAdapter( adapter ) {
                };
             },
             create( ...args ) {
-               adapterInstance = result.create( ...args );
+               adapterInstance = adapterFactory.create( ...args );
                return adapterInstance;
             }
          };
@@ -179,9 +179,9 @@ function decoratedAdapter( adapter ) {
  */
 export function tearDown() {
    widgetPrivateApi.destroy();
-   if( widgetDomContainer && widgetDomContainer.parentElement ) {
-      widgetDomContainer.parentElement.removeChild( widgetDomContainer );
-      widgetDomContainer = null;
+   if( anchorElement && anchorElement.parentElement ) {
+      anchorElement.parentElement.removeChild( anchorElement );
+      anchorElement = null;
    }
 }
 
@@ -339,13 +339,27 @@ export function createSetupForWidget( descriptor, optionalOptions = {} ) {
 
       let htmlTemplate;
       let features = {};
-      let loadingInfo;
-      const { artifacts, adapter = plainAdapter } = optionalOptions;
+      let loadContext;
+      const { artifacts, adapter = plainAdapter } = { ...optionalOptions, ...window.laxarMocksFixtures };
 
-      bootstrap( null, {
+      assert.state(
+         adapter.technology === descriptor.integration.technology,
+         `laxar-mocks: Widget is using technology "${descriptor.integration.technology}", ` +
+         `but adapter is for "${adapter.technology}". ` +
+         'Pass the correct adapter as option "adapter" to `createSetupForWidget`.'
+      );
+
+      if( anchorElement && anchorElement.parentElement ) {
+         anchorElement.parentElement.removeChild( anchorElement );
+      }
+      anchorElement = document.createElement( 'DIV' );
+      anchorElement.id = 'widgetContainer';
+      document.body.appendChild( anchorElement );
+
+      bootstrap( anchorElement, {
          widgetAdapters: [ decoratedAdapter( adapter ) ],
          configuration: {
-            // TODO (#26) move to the test setup
+            // TODO (#26) move to the test setup, use baseHref instead
             base: '/'
          },
          artifacts
@@ -360,8 +374,8 @@ export function createSetupForWidget( descriptor, optionalOptions = {} ) {
          }
       };
 
-      widgetPrivateApi.load = () => {
-         return laxarServices.widgetLoader.load( {
+      widgetPrivateApi.load = () =>
+         laxarServices.widgetLoader.load( {
             id: 'test-widget',
             widget: descriptor.name,
             features
@@ -376,16 +390,22 @@ export function createSetupForWidget( descriptor, optionalOptions = {} ) {
                   } );
                } );
             }
-         } ).then( info => {
-            loadingInfo = info;
-            return info.templatePromise.then( html => { htmlTemplate = html; } );
+         } )
+         .then( _ => {
+            loadContext = _;
+            return loadContext.templatePromise;
+         } )
+         .then( _ => {
+            htmlTemplate = _;
          } );
-      };
 
       widgetPrivateApi.destroy = () => {
-         if( loadingInfo ) {
-            loadingInfo.destroy();
-            loadingInfo = null;
+         if( adapter.reset ) {
+            adapter.reset();
+         }
+         if( loadContext ) {
+            loadContext.destroy();
+            loadContext = null;
          }
       };
 
