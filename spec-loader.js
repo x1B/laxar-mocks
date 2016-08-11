@@ -5,14 +5,21 @@
  */
 /* eslint-env node */
 
-
 /**
- * Webpack loader for a LaxarJS widget spec test that automatically requires dependencies:
+ * Webpack loader for LaxarJS widget spec tests.
  *
- *  - artifacts listing, stored under window.laxarMocksFixtures.artifacts
- *  - adapter (if the technology is not 'plain'), stored under window.laxarMocksFixtures.adapter
+ * Automatically loads the following dependencies, which you would otherwise have to pass as options to
+ * `createSetupForWidget`:
  *
- * To use, simply configure `laxar-mocks/spec-loader` to handle files matching /.spec.js$/`.
+ *  - `artifacts`: artifacts for the widget and its dependencies (obtained through the laxar-loader)
+ *  - `adapter`: the necessary adapter module, if the technology is not 'plain'
+ *
+ * The listings are stored at `window.laxarMocksFixtures`, where LaxarJS mocks will pick them up.
+ *
+ * To use, simply configure webpack to use the `laxar-mocks/spec-loader` for files matching /.spec.js$/`,
+ * and make sure to name your widget specs accordingly.
+ *
+ * @name spec-loader
  */
 
 const path = require( 'path' );
@@ -24,17 +31,20 @@ module.exports = function( content ) {
    }
 
    const widgetDirectory = this.resource.replace( /\/spec\/[^\/]+$/, '' );
-   const technology = require( `${widgetDirectory}/widget.json` ).integration.technology;
-   const widgetRef = `amd:./${path.relative( process.cwd(), widgetDirectory )}`;
+   const ref = `amd:./${path.relative( process.cwd(), widgetDirectory )}`;
+   const descriptor = require( `${widgetDirectory}/widget.json` );
+   const name = descriptor.name;
+   const technology = descriptor.integration.technology;
    const dependencies = {
       adapter: technology === 'plain' ? null : `laxar-${technology}-adapter`,
-      artifacts: `laxar-loader/entry?widget=${widgetRef}`
+      artifacts: `laxar-loader/entry?widget=${ref}`
    };
 
    return [
-      `window.laxarMocksFixtures = {
+      `require( 'laxar-mocks' ).fixtures[ ${JSON.stringify(name)} ] = {
          adapter: ${dependency('adapter')},
-         artifacts: ${dependency('artifacts')}
+         artifacts: ${dependency('artifacts')},
+         configuration: { base: '/' }
       }`,
       content
    ].join( ';' );

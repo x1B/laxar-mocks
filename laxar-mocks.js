@@ -8,11 +8,19 @@
  *
  * @module laxar-mocks
  */
-import { assert, bootstrap } from 'laxar';
-
-// TODO (#26)work out laxar-side API
-import { create as createEventBusMock } from 'laxar/lib/testing/event_bus_mock';
-import * as plainAdapter from 'laxar/lib/widget_adapters/plain_adapter';
+import { assert, bootstrap, plainAdapter } from 'laxar';
+import {
+   createAxAssetsMock,
+   createAxConfigurationMock,
+   createAxEventBusMock,
+   createAxFlowServiceMock,
+   createAxGlobalStorageMock,
+   createAxHeartbeatMock,
+   createAxI18nMock,
+   createAxLogMock,
+   createAxStorageMock,
+   createAxVisibilityMock
+} from 'laxar/laxar-widget-service-mocks';
 
 const widgetPrivateApi = {};
 
@@ -28,6 +36,19 @@ const noOp = () => {};
 let laxarServices;
 let anchorElement;
 let adapterInstance;
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * A map from widget names to setup-options (an object per widget name).
+ *
+ * Spec-runners may add entries to this map to provision widget specs with options that will automatically be
+ * picked up by `createSetupForWidget`. For example, the laxar-mocks spec-loader for webpack puts the
+ * `artifacts` and `adapter` options here.
+ *
+ * Options set by the spec-test when calling `createSetupForWidget` will take precedence over these values.
+ */
+export const fixtures = {};
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -140,23 +161,11 @@ function decoratedAdapter( adapter ) {
       technology: adapter.technology,
       bootstrap( modules, services, domRoot ) {
          laxarServices = services;
-         eventBus = createEventBusMock();
+         eventBus = createAxEventBusMock();
          const adapterFactory = adapter.bootstrap( modules, services, domRoot );
          return {
             ...adapterFactory,
-            serviceDecorators() {
-               return {
-                  ...( adapterFactory.serviceDecorators || noOp )(),
-                  axGlobalEventBus: () => eventBus,
-                  axEventBus: eventBus => {
-                     const methods = [ 'subscribe', 'publish', 'publishAndGatherReplies', 'addInspector' ];
-                     methods.forEach( method => {
-                        spyOn( eventBus, method ).and.callThrough();
-                     } );
-                     return eventBus;
-                  }
-               };
-            },
+            serviceDecorators: createServiceDecoratorsFactory( adapterFactory ),
             create( ...args ) {
                adapterInstance = adapterFactory.create( ...args );
                return adapterInstance;
@@ -164,6 +173,24 @@ function decoratedAdapter( adapter ) {
          };
       }
    };
+
+   ///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+   function createServiceDecoratorsFactory( adapterFactory ) {
+      return function serviceDecorators() {
+         return {
+            ...( adapterFactory.serviceDecorators || noOp )(),
+            axGlobalEventBus: () => eventBus,
+            axEventBus: eventBus => {
+               const methods = [ 'subscribe', 'publish', 'publishAndGatherReplies', 'addInspector' ];
+               methods.forEach( method => {
+                  spyOn( eventBus, method ).and.callThrough();
+               } );
+               return eventBus;
+            }
+         };
+      };
+   }
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -334,13 +361,58 @@ export function triggerStartupEvents( optionalEvents = {} ) {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/**
+ * Creates the setup function for a widget test. The returned function is asynchronous and should simply be
+ * passed to `beforeEach`. By doing so, the handling of the Jasmine `done` callback happens under the hood.
+ * To receive the widget descriptor (i.e. the contents of the `widget.json` file) the use of the RequireJS
+ * *json* plugin is advised.
+ *
+ * Example:
+ * ```js
+ * define( [
+ *    'json!../widget.json',
+ *    'laxar-mocks'
+ * ], function( descriptor, axMocks ) {
+ *    'use strict';
+ *
+ *    describe( 'An ExampleWidget', function() {
+ *
+ *       beforeEach( testing.createSetupForWidget( descriptor ) );
+ *
+ *       // ... widget configuration, loading and your tests
+ *
+ *       afterEach( axMocks.tearDown );
+ *
+ *    } );
+ * } );
+ * ```
+ *
+ * @param {Object} descriptor
+ *    the widget descriptor (taken from `widget.json`)
+ * @param {Object} [optionalOptions]
+ *    optional map of options
+ * @param {Object} [optionalOptions.adapter=laxar.plainAdapter]
+ *    a technology adapter to use for this widget.
+ *    When using a custom integration technology (something other than "plain" or "angular"), pass the
+ *    adapter module using this option.
+ * @param {Array} [optionalOptions.artifacts={}]
+ *    TODO
+ * @param {Array} [optionalOptions.configuration={}]
+ *    TODO
+ *
+ * @return {Function}
+ *    a function to directly pass to `beforeEach`, accepting a Jasmine `done` callback
+ */
 export function createSetupForWidget( descriptor, optionalOptions = {} ) {
-   return () => {
+   return done => {
+      const { artifacts = {}, adapter = plainAdapter, configuration = {} } = {
+         ...fixtures[ descriptor.name ],
+         ...optionalOptions
+      };
 
       let htmlTemplate;
       let features = {};
       let loadContext;
-      const { artifacts, adapter = plainAdapter } = { ...optionalOptions, ...window.laxarMocksFixtures };
 
       assert.state(
          adapter.technology === descriptor.integration.technology,
@@ -358,10 +430,7 @@ export function createSetupForWidget( descriptor, optionalOptions = {} ) {
 
       bootstrap( anchorElement, {
          widgetAdapters: [ decoratedAdapter( adapter ) ],
-         configuration: {
-            // TODO (#26) move to the test setup, use baseHref instead
-            base: '/'
-         },
+         configuration,
          artifacts
       } );
 
@@ -412,6 +481,8 @@ export function createSetupForWidget( descriptor, optionalOptions = {} ) {
       widgetPrivateApi.renderTo = container => {
          adapterInstance.domAttachTo( container, htmlTemplate );
       };
+
+      done();
    };
 }
 
