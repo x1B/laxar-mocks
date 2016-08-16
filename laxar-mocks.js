@@ -180,14 +180,24 @@ function decoratedAdapter( adapter ) {
       return function serviceDecorators() {
          return {
             ...( adapterFactory.serviceDecorators || noOp )(),
-            axGlobalEventBus: () => eventBus,
+            axAssets: () => createAxAssetsMock( /* TODO pass artifacts listing */ ),
+            axConfiguration: () => createAxConfigurationMock( /* TODO pass configuration data */ ),
             axEventBus: eventBus => {
                const methods = [ 'subscribe', 'publish', 'publishAndGatherReplies', 'addInspector' ];
                methods.forEach( method => {
                   spyOn( eventBus, method ).and.callThrough();
                } );
                return eventBus;
-            }
+            },
+            axFlowService: () => createAxFlowServiceMock(),
+            axGlobalEventBus: () => eventBus,
+            axGlobalLog: () => createAxLogMock(),
+            axGlobalStorage: () => createAxGlobalStorageMock(),
+            axHeartbeat: () => createAxHeartbeatMock(),
+            axI18n: i18n => createAxI18nMock( i18n ),
+            axLog: () => createAxLogMock(),
+            axStorage: () => createAxStorageMock(),
+            axVisibility: () => createAxVisibilityMock()
          };
       };
    }
@@ -395,10 +405,10 @@ export function triggerStartupEvents( optionalEvents = {} ) {
  *    a technology adapter to use for this widget.
  *    When using a custom integration technology (something other than "plain" or "angular"), pass the
  *    adapter module using this option.
- * @param {Array} [optionalOptions.artifacts={}]
- *    TODO
- * @param {Array} [optionalOptions.configuration={}]
- *    TODO
+ * @param {Object} [optionalOptions.artifacts={}]
+ *    an artifacts listing containing all assets for the widget and its controls
+ * @param {Object} [optionalOptions.configuration={}]
+ *    mock configuration data to use when testing the widget
  *
  * @return {Function}
  *    a function to directly pass to `beforeEach`, accepting a Jasmine `done` callback
