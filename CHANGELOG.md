@@ -3,7 +3,7 @@
 ## Last Changes
 
 - [#26](https://github.com/LaxarJS/laxar-mocks/issues/26): updated for LaxarJS v2.0 compatibility
-    + NEW FEATURE: see ticket for details
+    + **BREAKING CHANGE:** see ticket for details
 - [#24](https://github.com/LaxarJS/laxar-mocks/issues/24): documentation: added missing information on the widget ID
 
 
